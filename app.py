@@ -127,28 +127,28 @@ def get_info():
                     "ext": f.get("ext", ""),
                 }
 
-        # Build quality options using generic format selectors (works on all servers)
-        target_heights = [2160, 1440, 1080, 720, 480, 360]
+        # Build quality options
+        available_heights = sorted(video_map.keys(), reverse=True)
         quality_options = []
-        for h in target_heights:
-            if h in video_map:
-                v = video_map[h]
-                # Use generic format selector instead of specific format_id
-                fmt_str = f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best"
-                size_mb = round(v["filesize"] / (1024 * 1024), 1) if v["filesize"] else None
-                label = f"{h}p"
-                if v.get("fps") and v["fps"] > 30:
-                    label = f"{h}p{v['fps']}"
-                quality_options.append({
-                    "format_id": fmt_str,
-                    "label": label,
-                    "size_mb": size_mb,
-                })
+        for h in available_heights:
+            v = video_map[h]
+            fmt_id = v["format_id"]
+            if best_audio:
+                fmt_id = f"{v['format_id']}+{best_audio['format_id']}"
+            size_mb = round(v["filesize"] / (1024 * 1024), 1) if v["filesize"] else None
+            label = f"{h}p"
+            if v.get("fps") and v["fps"] > 30:
+                label = f"{h}p{v['fps']}"
+            quality_options.append({
+                "format_id": fmt_id,
+                "label": label,
+                "size_mb": size_mb,
+            })
 
         # Also add a "best audio only" option
         if best_audio:
             quality_options.append({
-                "format_id": "bestaudio/best",
+                "format_id": best_audio["format_id"],
                 "label": "僅音訊 (MP3)",
                 "size_mb": None,
                 "audio_only": True,
@@ -223,9 +223,14 @@ def download_video():
                         "message": "正在合併影片和音訊...",
                     })
 
+            # Add fallback: if specific format fails, try "best"
+            format_with_fallback = f"{format_id}/bestvideo+bestaudio/best"
+            if audio_only:
+                format_with_fallback = f"{format_id}/bestaudio/best"
+
             ydl_opts = {
                 **YDL_BASE_OPTS,
-                "format": format_id,
+                "format": format_with_fallback,
                 "outtmpl": output_template,
                 "progress_hooks": [progress_hook],
                 "merge_output_format": "mp4",
