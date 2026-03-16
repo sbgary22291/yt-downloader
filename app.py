@@ -25,8 +25,8 @@ progress_queues = {}
 temp_files = {}
 TEMP_FILE_TTL = 30 * 60  # 30 minutes
 
-# Cobalt API endpoint
-COBALT_API = "https://api.cobalt.tools"
+# Piped API (free, no auth needed)
+PIPED_API = "https://pipedapi.kavin.rocks"
 
 # yt-dlp options (for local mode only)
 YDL_BASE_OPTS = {
@@ -83,33 +83,70 @@ def get_info():
 
 
 def _get_info_cloud(url):
-    """Use YouTube oEmbed API for video info (no auth needed)."""
+    """Use Piped API for video info (free, no auth)."""
     try:
-        oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
-        r = http_requests.get(oembed_url, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-
-        # Extract video ID for thumbnail
         video_id = ""
         m = re.search(r'(?:v=|youtu\.be/|/shorts/)([a-zA-Z0-9_-]{11})', url)
         if m:
             video_id = m.group(1)
+        if not video_id:
+            return jsonify({"error": "無法辨識 YouTube 網址"}), 400
 
-        quality_options = [
-            {"format_id": "1080", "label": "1080p", "size_mb": None},
-            {"format_id": "720", "label": "720p", "size_mb": None},
-            {"format_id": "480", "label": "480p", "size_mb": None},
-            {"format_id": "360", "label": "360p", "size_mb": None},
-            {"format_id": "audio", "label": "僅音訊 (MP3)", "size_mb": None, "audio_only": True},
-        ]
+        r = http_requests.get(f"{PIPED_API}/streams/{video_id}", timeout=15)
+        r.raise_for_status()
+        data = r.json()
+
+        if data.get("error"):
+            return jsonify({"error": data["error"]}), 400
+
+        # Collect available video qualities
+        seen_heights = set()
+        quality_options = []
+        for s in sorted(data.get("videoStreams", []),
+                        key=lambda x: x.get("height", 0), reverse=True):
+            h = s.get("height", 0)
+            if h and h not in seen_heights and s.get("videoOnly", False) is False:
+                seen_heights.add(h)
+                quality_options.append({
+                    "format_id": s.get("url", ""),
+                    "label": f"{h}p",
+                    "size_mb": None,
+                })
+
+        # If no combined streams, use video-only streams
+        if not quality_options:
+            for s in sorted(data.get("videoStreams", []),
+                            key=lambda x: x.get("height", 0), reverse=True):
+                h = s.get("height", 0)
+                if h and h not in seen_heights:
+                    seen_heights.add(h)
+                    quality_options.append({
+                        "format_id": s.get("url", ""),
+                        "label": f"{h}p",
+                        "size_mb": None,
+                    })
+
+        # Audio option
+        audio_streams = data.get("audioStreams", [])
+        if audio_streams:
+            best_audio = max(audio_streams, key=lambda x: x.get("bitrate", 0))
+            quality_options.append({
+                "format_id": best_audio.get("url", ""),
+                "label": "僅音訊",
+                "size_mb": None,
+                "audio_only": True,
+            })
+
+        duration = data.get("duration", 0)
+        minutes = int(duration // 60)
+        seconds = int(duration % 60)
 
         result = {
             "title": data.get("title", "未知"),
-            "thumbnail": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg" if video_id else "",
-            "duration": "",
-            "duration_seconds": 0,
-            "channel": data.get("author_name", ""),
+            "thumbnail": data.get("thumbnailUrl", ""),
+            "duration": f"{minutes}:{seconds:02d}",
+            "duration_seconds": duration,
+            "channel": data.get("uploader", ""),
             "qualities": quality_options,
         }
         return jsonify(result)
@@ -192,40 +229,18 @@ def download_video():
         return _download_local(url, format_id, audio_only)
 
 
-def _download_cloud(url, quality, audio_only):
-    """Use Cobalt API to get download link."""
+def _download_cloud(url, format_id, audio_only):
+    """Piped API already gives us direct stream URLs in format_id."""
     try:
-        payload = {"url": url}
+        # format_id is already the direct stream URL from Piped
+        if not format_id or not format_id.startswith("http"):
+            return jsonify({"error": "無效的下載連結"}), 400
 
-        if audio_only:
-            payload["downloadMode"] = "audio"
-            payload["audioFormat"] = "mp3"
-        else:
-            payload["downloadMode"] = "auto"
-            payload["videoQuality"] = quality
+        filename = "video.mp4" if not audio_only else "audio.mp3"
 
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-
-        r = http_requests.post(COBALT_API, json=payload, headers=headers, timeout=30)
-        data = r.json()
-
-        if data.get("status") == "error":
-            error_msg = data.get("error", {}).get("code", "未知錯誤")
-            return jsonify({"error": f"下載失敗：{error_msg}"}), 400
-
-        download_url = data.get("url", "")
-        filename = data.get("filename", "video.mp4")
-
-        if not download_url:
-            return jsonify({"error": "無法取得下載連結"}), 400
-
-        # Return the cobalt download URL directly to the browser
         return jsonify({
             "status": "redirect",
-            "download_url": download_url,
+            "download_url": format_id,
             "filename": filename,
         })
 
