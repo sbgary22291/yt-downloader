@@ -127,21 +127,20 @@ def get_info():
                     "ext": f.get("ext", ""),
                 }
 
-        # Build quality options
+        # Build quality options using generic format selectors (works on all servers)
         target_heights = [2160, 1440, 1080, 720, 480, 360]
         quality_options = []
         for h in target_heights:
             if h in video_map:
                 v = video_map[h]
-                fmt_id = v["format_id"]
-                if best_audio:
-                    fmt_id = f"{v['format_id']}+{best_audio['format_id']}"
+                # Use generic format selector instead of specific format_id
+                fmt_str = f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best"
                 size_mb = round(v["filesize"] / (1024 * 1024), 1) if v["filesize"] else None
                 label = f"{h}p"
                 if v.get("fps") and v["fps"] > 30:
                     label = f"{h}p{v['fps']}"
                 quality_options.append({
-                    "format_id": fmt_id,
+                    "format_id": fmt_str,
                     "label": label,
                     "size_mb": size_mb,
                 })
@@ -149,14 +148,13 @@ def get_info():
         # Also add a "best audio only" option
         if best_audio:
             quality_options.append({
-                "format_id": best_audio["format_id"],
+                "format_id": "bestaudio/best",
                 "label": "僅音訊 (MP3)",
                 "size_mb": None,
                 "audio_only": True,
             })
 
         if not quality_options:
-            # Fallback: offer "best"
             quality_options.append({
                 "format_id": "best",
                 "label": "最佳畫質",
