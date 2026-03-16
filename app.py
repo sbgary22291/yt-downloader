@@ -29,6 +29,18 @@ TEMP_FILE_TTL = 30 * 60  # 30 minutes
 _invidious_cache = {"instances": [], "updated": 0}
 
 
+FALLBACK_INSTANCES = [
+    "https://inv.nadeko.net",
+    "https://invidious.fdn.fr",
+    "https://invidious.nerdvpn.de",
+    "https://vid.puffyan.us",
+    "https://inv.tux.pizza",
+    "https://invidious.privacyredirect.com",
+    "https://iv.ggtyler.dev",
+    "https://invidious.protokolla.fi",
+]
+
+
 def get_invidious_instances():
     """Fetch list of working Invidious API instances, cached for 1 hour."""
     now = time.time()
@@ -40,25 +52,27 @@ def get_invidious_instances():
         r.raise_for_status()
         instances = []
         for item in r.json():
-            info = item[1] if isinstance(item, list) else item
-            if (info.get("type") == "https" and
-                    info.get("api") is not False and
-                    info.get("uri")):
-                instances.append(info["uri"])
+            # Format: [domain, info_dict]
+            if isinstance(item, list) and len(item) >= 2:
+                info = item[1]
+            elif isinstance(item, dict):
+                info = item
+            else:
+                continue
+            uri = info.get("uri", "")
+            itype = info.get("type", "")
+            api_ok = info.get("api")
+            if uri and itype == "https" and api_ok is not False:
+                instances.append(uri)
         if instances:
             _invidious_cache["instances"] = instances
             _invidious_cache["updated"] = now
-        return instances
+            return instances
     except Exception:
         pass
 
-    # Hardcoded fallbacks
-    return [
-        "https://inv.nadeko.net",
-        "https://invidious.fdn.fr",
-        "https://invidious.nerdvpn.de",
-        "https://vid.puffyan.us",
-    ]
+    # Always fall back to hardcoded list
+    return FALLBACK_INSTANCES
 
 # yt-dlp options (for local mode only)
 YDL_BASE_OPTS = {
@@ -96,11 +110,23 @@ def index():
 
 @app.route("/api/debug")
 def debug_info():
+    # Check if API works
+    api_error = ""
+    api_count = 0
+    try:
+        r = http_requests.get("https://api.invidious.io/instances.json", timeout=10)
+        api_count = len(r.json()) if r.ok else 0
+        if not r.ok:
+            api_error = f"HTTP {r.status_code}"
+    except Exception as e:
+        api_error = str(e)[:200]
+
     instances = get_invidious_instances()
-    # Test first 3 instances
+
+    # Test first 5 instances
     results = []
     test_id = "dQw4w9WgXcQ"
-    for api in instances[:3]:
+    for api in instances[:5]:
         try:
             r = http_requests.get(f"{api}/api/v1/videos/{test_id}",
                                   timeout=10,
@@ -108,12 +134,14 @@ def debug_info():
             results.append({
                 "instance": api,
                 "status": r.status_code,
-                "title": r.json().get("title", "") if r.ok else r.text[:200],
+                "title": r.json().get("title", "") if r.ok else r.text[:100],
             })
         except Exception as e:
-            results.append({"instance": api, "error": str(e)[:200]})
+            results.append({"instance": api, "error": str(e)[:100]})
     return jsonify({
-        "total_instances": len(instances),
+        "api_raw_count": api_count,
+        "api_error": api_error,
+        "filtered_instances": len(instances),
         "first_5": instances[:5],
         "test_results": results,
     })
