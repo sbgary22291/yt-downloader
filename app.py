@@ -25,8 +25,14 @@ progress_queues = {}
 temp_files = {}
 TEMP_FILE_TTL = 30 * 60  # 30 minutes
 
-# Piped API (free, no auth needed)
-PIPED_API = "https://pipedapi.kavin.rocks"
+# Piped API instances (free, no auth needed) - multiple fallbacks
+PIPED_APIS = [
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.adminforge.de",
+    "https://api.piped.projectsegfau.lt",
+    "https://pipedapi.leptons.xyz",
+    "https://pipedapi.r4fo.com",
+]
 
 # yt-dlp options (for local mode only)
 YDL_BASE_OPTS = {
@@ -92,12 +98,24 @@ def _get_info_cloud(url):
         if not video_id:
             return jsonify({"error": "無法辨識 YouTube 網址"}), 400
 
-        r = http_requests.get(f"{PIPED_API}/streams/{video_id}", timeout=15)
-        r.raise_for_status()
-        data = r.json()
+        # Try multiple Piped instances
+        data = None
+        last_error = ""
+        for api in PIPED_APIS:
+            try:
+                r = http_requests.get(f"{api}/streams/{video_id}", timeout=10)
+                r.raise_for_status()
+                data = r.json()
+                if not data.get("error"):
+                    break
+                last_error = data.get("error", "")
+                data = None
+            except Exception as e:
+                last_error = str(e)
+                continue
 
-        if data.get("error"):
-            return jsonify({"error": data["error"]}), 400
+        if not data:
+            return jsonify({"error": f"所有伺服器都無法取得影片資訊：{last_error}"}), 400
 
         # Collect available video qualities
         seen_heights = set()
