@@ -62,6 +62,31 @@ def index():
     return render_template("index.html", cloud_mode=CLOUD_MODE)
 
 
+@app.route("/api/debug-formats")
+def debug_formats():
+    url = request.args.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "需要 url 參數"}), 400
+    try:
+        import yt_dlp
+        ydl_opts = {**YDL_BASE_OPTS}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        fmts = []
+        for f in info.get("formats", []):
+            fmts.append({
+                "id": f.get("format_id"),
+                "ext": f.get("ext"),
+                "height": f.get("height"),
+                "vcodec": f.get("vcodec"),
+                "acodec": f.get("acodec"),
+                "filesize": f.get("filesize"),
+            })
+        return jsonify({"count": len(fmts), "formats": fmts})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 @app.route("/api/check")
 def check_ffmpeg():
     has_ffmpeg = shutil.which("ffmpeg") is not None
