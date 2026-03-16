@@ -94,6 +94,31 @@ def index():
     return render_template("index.html", cloud_mode=CLOUD_MODE)
 
 
+@app.route("/api/debug")
+def debug_info():
+    instances = get_invidious_instances()
+    # Test first 3 instances
+    results = []
+    test_id = "dQw4w9WgXcQ"
+    for api in instances[:3]:
+        try:
+            r = http_requests.get(f"{api}/api/v1/videos/{test_id}",
+                                  timeout=10,
+                                  params={"fields": "title"})
+            results.append({
+                "instance": api,
+                "status": r.status_code,
+                "title": r.json().get("title", "") if r.ok else r.text[:200],
+            })
+        except Exception as e:
+            results.append({"instance": api, "error": str(e)[:200]})
+    return jsonify({
+        "total_instances": len(instances),
+        "first_5": instances[:5],
+        "test_results": results,
+    })
+
+
 @app.route("/api/check")
 def check_ffmpeg():
     has_ffmpeg = shutil.which("ffmpeg") is not None
