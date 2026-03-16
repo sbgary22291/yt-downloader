@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT Downloader</title>
+<style>
+:root {
+  --bg: #0f0f0f;
+  --card: #1a1a2e;
+  --card-border: #2a2a4a;
+  --accent: #e94560;
+  --accent-hover: #ff6b81;
+  --text: #eee;
+  --text-dim: #888;
+  --input-bg: #16213e;
+  --success: #00c853;
+  --radius: 12px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+}
+
+.container {
+  width: 100%;
+  max-width: 600px;
+  margin-top: 30px;
+}
+
+h1 {
+  text-align: center;
+  font-size: 1.8rem;
+  margin-bottom: 24px;
+  background: linear-gradient(135deg, var(--accent), #c23152);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.input-group {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.input-group input {
+  flex: 1;
+  padding: 14px 16px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 1rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.input-group input:focus {
+  border-color: var(--accent);
+}
+
+.btn {
+  padding: 14px 24px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: white;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.btn:hover { background: var(--accent-hover); }
+.btn:active { transform: scale(0.97); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 20px;
+  display: none;
+}
+
+.card.show { display: block; }
+
+.thumbnail {
+  width: 100%;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.video-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+.video-meta {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  margin-bottom: 16px;
+}
+
+.quality-label {
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.quality-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.quality-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.quality-option:hover {
+  border-color: var(--accent);
+  background: rgba(233, 69, 96, 0.08);
+}
+
+.quality-option.selected {
+  border-color: var(--accent);
+  background: rgba(233, 69, 96, 0.15);
+}
+
+.quality-option input[type="radio"] { display: none; }
+
+.radio-dot {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--text-dim);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.quality-option.selected .radio-dot {
+  border-color: var(--accent);
+}
+
+.radio-dot::after {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: none;
+}
+
+.quality-option.selected .radio-dot::after { display: block; }
+
+.quality-text { flex: 1; }
+.quality-size { color: var(--text-dim); font-size: 0.85rem; }
+
+.btn-download {
+  width: 100%;
+  padding: 16px;
+  font-size: 1.1rem;
+}
+
+/* Progress */
+.progress-section {
+  display: none;
+}
+
+.progress-section.show { display: block; }
+
+.progress-bar-track {
+  width: 100%;
+  height: 10px;
+  background: var(--input-bg);
+  border-radius: 5px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), #ff6b81);
+  border-radius: 5px;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.progress-percent {
+  font-size: 1.2rem;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+/* Status messages */
+.status-msg {
+  text-align: center;
+  padding: 12px;
+  border-radius: 8px;
+  margin-top: 12px;
+  display: none;
+}
+
+.status-msg.show { display: block; }
+
+.status-msg.success {
+  background: rgba(0, 200, 83, 0.15);
+  color: var(--success);
+}
+
+.status-msg.error {
+  background: rgba(233, 69, 96, 0.15);
+  color: var(--accent);
+}
+
+.status-msg.merging {
+  background: rgba(255, 193, 7, 0.15);
+  color: #ffc107;
+}
+
+/* ffmpeg warning */
+.warning-banner {
+  background: rgba(255, 193, 7, 0.15);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+  color: #ffc107;
+  display: none;
+}
+
+.warning-banner.show { display: block; }
+
+/* Loading spinner */
+.spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Responsive */
+@media (max-width: 480px) {
+  .container { margin-top: 10px; }
+  h1 { font-size: 1.5rem; }
+  .input-group { flex-direction: column; }
+  .btn { width: 100%; }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>YT Downloader</h1>
+
+  <div class="warning-banner" id="ffmpegWarning">
+    未偵測到 ffmpeg，高畫質影片可能無法正常合併。<br>
+    請執行：<code>winget install ffmpeg</code> 安裝後重啟。
+  </div>
+
+  <div class="input-group">
+    <input type="text" id="urlInput" placeholder="貼上 YouTube 網址..." autocomplete="off">
+    <button class="btn" id="fetchBtn" onclick="fetchInfo()">取得資訊</button>
+  </div>
+
+  <div class="card" id="infoCard">
+    <img class="thumbnail" id="thumbnail" src="" alt="">
+    <div class="video-title" id="videoTitle"></div>
+    <div class="video-meta">
+      <span id="videoChannel"></span> &middot; <span id="videoDuration"></span>
+    </div>
+
+    <div class="quality-label">畫質選擇</div>
+    <div class="quality-options" id="qualityOptions"></div>
+
+    <button class="btn btn-download" id="downloadBtn" onclick="startDownload()">下載</button>
+  </div>
+
+  <div class="progress-section" id="progressSection">
+    <div class="progress-percent" id="progressPercent">0%</div>
+    <div class="progress-bar-track">
+      <div class="progress-bar-fill" id="progressBar"></div>
+    </div>
+    <div class="progress-text">
+      <span id="progressSpeed">速度: --</span>
+      <span id="progressEta">剩餘: --</span>
+    </div>
+  </div>
+
+  <div class="status-msg" id="statusMsg"></div>
+</div>
+
+<script>
+let currentUrl = '';
+let selectedFormat = '';
+let isAudioOnly = false;
+const cloudMode = {{ 'true' if cloud_mode else 'false' }};
+
+// Check ffmpeg on load
+fetch('/api/check')
+  .then(r => r.json())
+  .then(data => {
+    if (!data.ffmpeg) {
+      document.getElementById('ffmpegWarning').classList.add('show');
+    }
+  })
+  .catch(() => {});
+
+// Allow Enter key
+document.getElementById('urlInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') fetchInfo();
+});
+
+function fetchInfo() {
+  const url = document.getElementById('urlInput').value.trim();
+  if (!url) return;
+
+  currentUrl = url;
+  const btn = document.getElementById('fetchBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>載入中';
+
+  hideStatus();
+  document.getElementById('infoCard').classList.remove('show');
+  document.getElementById('progressSection').classList.remove('show');
+
+  fetch('/api/info', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      btn.disabled = false;
+      btn.textContent = '取得資訊';
+
+      if (data.error) {
+        showStatus(data.error, 'error');
+        return;
+      }
+
+      document.getElementById('thumbnail').src = data.thumbnail;
+      document.getElementById('videoTitle').textContent = data.title;
+      document.getElementById('videoChannel').textContent = data.channel;
+      document.getElementById('videoDuration').textContent = data.duration;
+
+      const container = document.getElementById('qualityOptions');
+      container.innerHTML = '';
+      selectedFormat = '';
+      isAudioOnly = false;
+
+      data.qualities.forEach((q, i) => {
+        const div = document.createElement('div');
+        div.className = 'quality-option' + (i === 0 ? ' selected' : '');
+        div.dataset.formatId = q.format_id;
+        div.dataset.audioOnly = q.audio_only ? 'true' : 'false';
+
+        const sizeText = q.size_mb ? `~${q.size_mb} MB` : '';
+
+        div.innerHTML = `
+          <input type="radio" name="quality" value="${q.format_id}" ${i === 0 ? 'checked' : ''}>
+          <div class="radio-dot"></div>
+          <div class="quality-text">${q.label}</div>
+          <div class="quality-size">${sizeText}</div>
+        `;
+
+        div.addEventListener('click', () => {
+          container.querySelectorAll('.quality-option').forEach(el => el.classList.remove('selected'));
+          div.classList.add('selected');
+          div.querySelector('input').checked = true;
+          selectedFormat = q.format_id;
+          isAudioOnly = q.audio_only || false;
+        });
+
+        container.appendChild(div);
+
+        if (i === 0) {
+          selectedFormat = q.format_id;
+          isAudioOnly = q.audio_only || false;
+        }
+      });
+
+      document.getElementById('infoCard').classList.add('show');
+    })
+    .catch(err => {
+      btn.disabled = false;
+      btn.textContent = '取得資訊';
+      showStatus('連線錯誤：' + err.message, 'error');
+    });
+}
+
+function startDownload() {
+  if (!currentUrl || !selectedFormat) return;
+
+  const btn = document.getElementById('downloadBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>下載中...';
+
+  hideStatus();
+  // Remove any previous cloud download button
+  const oldLink = document.querySelector('.cloud-download-link');
+  if (oldLink) oldLink.remove();
+  document.getElementById('progressSection').classList.add('show');
+  document.getElementById('progressBar').style.width = '0%';
+  document.getElementById('progressPercent').textContent = '0%';
+  document.getElementById('progressSpeed').textContent = '速度: --';
+  document.getElementById('progressEta').textContent = '剩餘: --';
+
+  const params = new URLSearchParams({
+    url: currentUrl,
+    format_id: selectedFormat,
+    audio_only: isAudioOnly,
+  });
+
+  const evtSource = new EventSource(`/api/download?${params}`);
+
+  evtSource.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+
+    if (data.type === 'progress') {
+      document.getElementById('progressBar').style.width = data.percent + '%';
+      document.getElementById('progressPercent').textContent = data.percent + '%';
+      document.getElementById('progressSpeed').textContent = '速度: ' + data.speed;
+      document.getElementById('progressEta').textContent = '剩餘: ' + data.eta;
+    }
+    else if (data.type === 'merging') {
+      document.getElementById('progressPercent').textContent = '合併中...';
+      showStatus(data.message, 'merging');
+    }
+    else if (data.type === 'done') {
+      evtSource.close();
+      document.getElementById('progressBar').style.width = '100%';
+      document.getElementById('progressPercent').textContent = '100%';
+      btn.disabled = false;
+      btn.textContent = '下載';
+
+      if (cloudMode && data.file_id) {
+        // Cloud mode: trigger browser download
+        const downloadUrl = '/api/file/' + data.file_id;
+        showStatus('準備完成！點擊下方按鈕儲存到裝置', 'success');
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = data.filename;
+        link.className = 'btn btn-download cloud-download-link';
+        link.textContent = '點擊下載到裝置';
+        link.style.display = 'block';
+        link.style.textAlign = 'center';
+        link.style.textDecoration = 'none';
+        link.style.marginTop = '12px';
+        document.getElementById('statusMsg').after(link);
+        // Also auto-trigger download
+        const autoLink = document.createElement('a');
+        autoLink.href = downloadUrl;
+        autoLink.download = data.filename;
+        document.body.appendChild(autoLink);
+        autoLink.click();
+        document.body.removeChild(autoLink);
+      } else {
+        showStatus('完成！已存到 Downloads/' + data.filename, 'success');
+      }
+    }
+    else if (data.type === 'error') {
+      evtSource.close();
+      btn.disabled = false;
+      btn.textContent = '下載';
+      showStatus('錯誤：' + data.message, 'error');
+    }
+  };
+
+  evtSource.onerror = function() {
+    evtSource.close();
+    btn.disabled = false;
+    btn.textContent = '下載';
+    showStatus('連線中斷', 'error');
+  };
+}
+
+function showStatus(msg, type) {
+  const el = document.getElementById('statusMsg');
+  el.textContent = msg;
+  el.className = 'status-msg show ' + type;
+}
+
+function hideStatus() {
+  document.getElementById('statusMsg').className = 'status-msg';
+}
+</script>
+
+</body>
+</html>
