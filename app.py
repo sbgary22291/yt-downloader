@@ -24,6 +24,21 @@ progress_queues = {}
 temp_files = {}
 TEMP_FILE_TTL = 30 * 60  # 30 minutes
 
+# Common yt-dlp options to avoid YouTube bot detection
+YDL_BASE_OPTS = {
+    "quiet": True,
+    "no_warnings": True,
+    "extractor_args": {"youtube": {"player_client": ["mediaconnect"]}},
+    "http_headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    },
+}
+
+# Use cookies.txt if it exists
+COOKIES_FILE = os.path.join(os.path.dirname(__file__), "cookies.txt")
+if os.path.exists(COOKIES_FILE):
+    YDL_BASE_OPTS["cookiefile"] = COOKIES_FILE
+
 
 def cleanup_temp_files():
     """Remove temp files older than TTL, runs every 5 minutes."""
@@ -68,7 +83,7 @@ def get_info():
     try:
         import yt_dlp
 
-        ydl_opts = {"quiet": True, "no_warnings": True}
+        ydl_opts = {**YDL_BASE_OPTS}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
@@ -211,12 +226,11 @@ def download_video():
                     })
 
             ydl_opts = {
+                **YDL_BASE_OPTS,
                 "format": format_id,
                 "outtmpl": output_template,
                 "progress_hooks": [progress_hook],
                 "merge_output_format": "mp4",
-                "quiet": True,
-                "no_warnings": True,
             }
 
             if audio_only:
