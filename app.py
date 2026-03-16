@@ -24,14 +24,10 @@ progress_queues = {}
 temp_files = {}
 TEMP_FILE_TTL = 30 * 60  # 30 minutes
 
-# Common yt-dlp options to avoid YouTube bot detection
+# Common yt-dlp options
 YDL_BASE_OPTS = {
     "quiet": True,
     "no_warnings": True,
-    "extractor_args": {"youtube": {"player_client": ["mediaconnect"]}},
-    "http_headers": {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    },
 }
 
 # Use cookies.txt if it exists
