@@ -25,14 +25,40 @@ progress_queues = {}
 temp_files = {}
 TEMP_FILE_TTL = 30 * 60  # 30 minutes
 
-# Piped API instances (free, no auth needed) - multiple fallbacks
-PIPED_APIS = [
-    "https://pipedapi.kavin.rocks",
-    "https://pipedapi.adminforge.de",
-    "https://api.piped.projectsegfau.lt",
-    "https://pipedapi.leptons.xyz",
-    "https://pipedapi.r4fo.com",
-]
+# Invidious API - dynamically fetch working instances
+_invidious_cache = {"instances": [], "updated": 0}
+
+
+def get_invidious_instances():
+    """Fetch list of working Invidious API instances, cached for 1 hour."""
+    now = time.time()
+    if _invidious_cache["instances"] and now - _invidious_cache["updated"] < 3600:
+        return _invidious_cache["instances"]
+
+    try:
+        r = http_requests.get("https://api.invidious.io/instances.json", timeout=10)
+        r.raise_for_status()
+        instances = []
+        for item in r.json():
+            info = item[1] if isinstance(item, list) else item
+            if (info.get("type") == "https" and
+                    info.get("api") is not False and
+                    info.get("uri")):
+                instances.append(info["uri"])
+        if instances:
+            _invidious_cache["instances"] = instances
+            _invidious_cache["updated"] = now
+        return instances
+    except Exception:
+        pass
+
+    # Hardcoded fallbacks
+    return [
+        "https://inv.nadeko.net",
+        "https://invidious.fdn.fr",
+        "https://invidious.nerdvpn.de",
+        "https://vid.puffyan.us",
+    ]
 
 # yt-dlp options (for local mode only)
 YDL_BASE_OPTS = {
@@ -89,7 +115,7 @@ def get_info():
 
 
 def _get_info_cloud(url):
-    """Use Piped API for video info (free, no auth)."""
+    """Use Invidious API for video info (free, no auth)."""
     try:
         video_id = ""
         m = re.search(r'(?:v=|youtu\.be/|/shorts/)([a-zA-Z0-9_-]{11})', url)
@@ -98,73 +124,83 @@ def _get_info_cloud(url):
         if not video_id:
             return jsonify({"error": "無法辨識 YouTube 網址"}), 400
 
-        # Try multiple Piped instances
+        instances = get_invidious_instances()
         data = None
         last_error = ""
-        for api in PIPED_APIS:
+        for api in instances[:10]:  # Try up to 10 instances
             try:
-                r = http_requests.get(f"{api}/streams/{video_id}", timeout=10)
+                r = http_requests.get(
+                    f"{api}/api/v1/videos/{video_id}",
+                    timeout=10,
+                    params={"fields": "title,author,lengthSeconds,videoThumbnails,adaptiveFormats"},
+                )
                 r.raise_for_status()
                 data = r.json()
-                if not data.get("error"):
+                if data.get("title"):
                     break
-                last_error = data.get("error", "")
                 data = None
             except Exception as e:
                 last_error = str(e)
                 continue
 
         if not data:
-            return jsonify({"error": f"所有伺服器都無法取得影片資訊：{last_error}"}), 400
+            return jsonify({"error": f"無法取得影片資訊：{last_error}"}), 400
 
-        # Collect available video qualities
+        # Collect video qualities
         seen_heights = set()
         quality_options = []
-        for s in sorted(data.get("videoStreams", []),
-                        key=lambda x: x.get("height", 0), reverse=True):
-            h = s.get("height", 0)
-            if h and h not in seen_heights and s.get("videoOnly", False) is False:
-                seen_heights.add(h)
-                quality_options.append({
-                    "format_id": s.get("url", ""),
-                    "label": f"{h}p",
-                    "size_mb": None,
-                })
-
-        # If no combined streams, use video-only streams
-        if not quality_options:
-            for s in sorted(data.get("videoStreams", []),
-                            key=lambda x: x.get("height", 0), reverse=True):
-                h = s.get("height", 0)
-                if h and h not in seen_heights:
-                    seen_heights.add(h)
+        for f in data.get("adaptiveFormats", []):
+            ftype = f.get("type", "")
+            h = f.get("resolution", "").replace("p", "")
+            dl_url = f.get("url", "")
+            if "video" in ftype and h.isdigit() and dl_url:
+                h_int = int(h)
+                if h_int not in seen_heights:
+                    seen_heights.add(h_int)
                     quality_options.append({
-                        "format_id": s.get("url", ""),
-                        "label": f"{h}p",
+                        "format_id": dl_url,
+                        "label": f"{h_int}p",
                         "size_mb": None,
+                        "height": h_int,
                     })
 
+        quality_options.sort(key=lambda x: x.get("height", 0), reverse=True)
+        for q in quality_options:
+            q.pop("height", None)
+
         # Audio option
-        audio_streams = data.get("audioStreams", [])
-        if audio_streams:
-            best_audio = max(audio_streams, key=lambda x: x.get("bitrate", 0))
+        for f in data.get("adaptiveFormats", []):
+            ftype = f.get("type", "")
+            dl_url = f.get("url", "")
+            if "audio" in ftype and dl_url:
+                quality_options.append({
+                    "format_id": dl_url,
+                    "label": "僅音訊",
+                    "size_mb": None,
+                    "audio_only": True,
+                })
+                break
+
+        if not quality_options:
             quality_options.append({
-                "format_id": best_audio.get("url", ""),
-                "label": "僅音訊",
+                "format_id": "best",
+                "label": "最佳畫質",
                 "size_mb": None,
-                "audio_only": True,
             })
 
-        duration = data.get("duration", 0)
+        duration = data.get("lengthSeconds", 0)
         minutes = int(duration // 60)
         seconds = int(duration % 60)
 
+        thumbnails = data.get("videoThumbnails", [])
+        thumb_url = thumbnails[0]["url"] if thumbnails else ""
+
         result = {
             "title": data.get("title", "未知"),
-            "thumbnail": data.get("thumbnailUrl", ""),
+            "thumbnail": thumb_url,
             "duration": f"{minutes}:{seconds:02d}",
             "duration_seconds": duration,
-            "channel": data.get("uploader", ""),
+            "channel": data.get("author", ""),
             "qualities": quality_options,
         }
         return jsonify(result)
