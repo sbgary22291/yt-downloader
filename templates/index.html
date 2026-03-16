@@ -337,15 +337,17 @@ let selectedFormat = '';
 let isAudioOnly = false;
 const cloudMode = {{ 'true' if cloud_mode else 'false' }};
 
-// Check ffmpeg on load
-fetch('/api/check')
-  .then(r => r.json())
-  .then(data => {
-    if (!data.ffmpeg) {
-      document.getElementById('ffmpegWarning').classList.add('show');
-    }
-  })
-  .catch(() => {});
+// Check ffmpeg on load (local mode only)
+if (!cloudMode) {
+  fetch('/api/check')
+    .then(r => r.json())
+    .then(data => {
+      if (!data.ffmpeg) {
+        document.getElementById('ffmpegWarning').classList.add('show');
+      }
+    })
+    .catch(() => {});
+}
 
 // Allow Enter key
 document.getElementById('urlInput').addEventListener('keydown', e => {
