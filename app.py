@@ -100,66 +100,28 @@ def get_info():
 
         formats = info.get("formats", [])
 
-        # Group video formats by resolution, pick best per resolution
-        video_map = {}
+        # Collect available heights
+        available_heights = set()
         for f in formats:
             h = f.get("height")
-            vcodec = f.get("vcodec", "none")
-            if not h or vcodec == "none":
-                continue
-            ext = f.get("ext", "")
-            # Prefer mp4/webm
-            if ext not in ("mp4", "webm"):
-                continue
-            key = h
-            filesize = f.get("filesize") or f.get("filesize_approx") or 0
-            if key not in video_map or filesize > (video_map[key].get("filesize") or 0):
-                video_map[key] = {
-                    "format_id": f["format_id"],
-                    "height": h,
-                    "ext": ext,
-                    "filesize": filesize,
-                    "fps": f.get("fps", 30),
-                    "vcodec": vcodec,
-                }
+            if h and f.get("vcodec", "none") != "none":
+                available_heights.add(h)
 
-        # Find best audio
-        best_audio = None
-        for f in formats:
-            acodec = f.get("acodec", "none")
-            vcodec = f.get("vcodec", "none")
-            if acodec == "none" or vcodec != "none":
-                continue
-            abr = f.get("abr") or 0
-            if best_audio is None or abr > (best_audio.get("abr") or 0):
-                best_audio = {
-                    "format_id": f["format_id"],
-                    "abr": abr,
-                    "ext": f.get("ext", ""),
-                }
+        has_audio = any(f.get("acodec", "none") != "none" for f in formats)
 
-        # Build quality options
-        available_heights = sorted(video_map.keys(), reverse=True)
+        # Build quality options using generic selectors (never use specific format_id)
         quality_options = []
-        for h in available_heights:
-            v = video_map[h]
-            fmt_id = v["format_id"]
-            if best_audio:
-                fmt_id = f"{v['format_id']}+{best_audio['format_id']}"
-            size_mb = round(v["filesize"] / (1024 * 1024), 1) if v["filesize"] else None
+        for h in sorted(available_heights, reverse=True):
             label = f"{h}p"
-            if v.get("fps") and v["fps"] > 30:
-                label = f"{h}p{v['fps']}"
             quality_options.append({
-                "format_id": fmt_id,
+                "format_id": f"bv[height<={h}]+ba/b[height<={h}]/b",
                 "label": label,
-                "size_mb": size_mb,
+                "size_mb": None,
             })
 
-        # Also add a "best audio only" option
-        if best_audio:
+        if has_audio:
             quality_options.append({
-                "format_id": best_audio["format_id"],
+                "format_id": "ba/b",
                 "label": "僅音訊 (MP3)",
                 "size_mb": None,
                 "audio_only": True,
@@ -167,7 +129,7 @@ def get_info():
 
         if not quality_options:
             quality_options.append({
-                "format_id": "best",
+                "format_id": "b",
                 "label": "最佳畫質",
                 "size_mb": None,
             })
@@ -234,14 +196,9 @@ def download_video():
                         "message": "正在合併影片和音訊...",
                     })
 
-            # Add fallback: if specific format fails, try "best"
-            format_with_fallback = f"{format_id}/bestvideo+bestaudio/best"
-            if audio_only:
-                format_with_fallback = f"{format_id}/bestaudio/best"
-
             ydl_opts = {
                 **YDL_BASE_OPTS,
-                "format": format_with_fallback,
+                "format": format_id,
                 "outtmpl": output_template,
                 "progress_hooks": [progress_hook],
                 "merge_output_format": "mp4",
