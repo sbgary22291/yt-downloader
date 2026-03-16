@@ -1,4 +1,2 @@
 flask
 yt-dlp
-gunicorn
-requests

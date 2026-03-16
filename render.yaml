@@ -1,8 +1,0 @@
-services:
-  - type: web
-    name: yt-downloader
-    runtime: docker
-    plan: free
-    envVars:
-      - key: CLOUD_MODE
-        value: "1"
