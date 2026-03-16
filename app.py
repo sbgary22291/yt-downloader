@@ -62,29 +62,19 @@ def index():
     return render_template("index.html", cloud_mode=CLOUD_MODE)
 
 
-@app.route("/api/debug-formats")
-def debug_formats():
-    url = request.args.get("url", "").strip()
-    if not url:
-        return jsonify({"error": "需要 url 參數"}), 400
-    try:
-        import yt_dlp
-        ydl_opts = {**YDL_BASE_OPTS}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-        fmts = []
-        for f in info.get("formats", []):
-            fmts.append({
-                "id": f.get("format_id"),
-                "ext": f.get("ext"),
-                "height": f.get("height"),
-                "vcodec": f.get("vcodec"),
-                "acodec": f.get("acodec"),
-                "filesize": f.get("filesize"),
-            })
-        return jsonify({"count": len(fmts), "formats": fmts})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+@app.route("/api/debug")
+def debug_info():
+    import yt_dlp
+    cookies_exists = os.path.exists(COOKIES_FILE)
+    cookies_size = os.path.getsize(COOKIES_FILE) if cookies_exists else 0
+    return jsonify({
+        "cloud_mode": CLOUD_MODE,
+        "cookies_path": COOKIES_FILE,
+        "cookies_exists": cookies_exists,
+        "cookies_size": cookies_size,
+        "yt_dlp_version": yt_dlp.version.__version__,
+        "base_opts": {k: str(v) for k, v in YDL_BASE_OPTS.items()},
+    })
 
 
 @app.route("/api/check")
