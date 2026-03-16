@@ -438,82 +438,108 @@ function startDownload() {
   btn.innerHTML = '<span class="spinner"></span>下載中...';
 
   hideStatus();
-  // Remove any previous cloud download button
   const oldLink = document.querySelector('.cloud-download-link');
   if (oldLink) oldLink.remove();
-  document.getElementById('progressSection').classList.add('show');
-  document.getElementById('progressBar').style.width = '0%';
-  document.getElementById('progressPercent').textContent = '0%';
-  document.getElementById('progressSpeed').textContent = '速度: --';
-  document.getElementById('progressEta').textContent = '剩餘: --';
 
-  const params = new URLSearchParams({
-    url: currentUrl,
-    format_id: selectedFormat,
-    audio_only: isAudioOnly,
-  });
+  if (cloudMode) {
+    // Cloud mode: use Cobalt API via our backend, get redirect URL
+    document.getElementById('progressSection').classList.remove('show');
 
-  const evtSource = new EventSource(`/api/download?${params}`);
+    const params = new URLSearchParams({
+      url: currentUrl,
+      format_id: selectedFormat,
+      audio_only: isAudioOnly,
+    });
 
-  evtSource.onmessage = function(event) {
-    const data = JSON.parse(event.data);
+    fetch(`/api/download?${params}`)
+      .then(r => r.json())
+      .then(data => {
+        btn.disabled = false;
+        btn.textContent = '下載';
 
-    if (data.type === 'progress') {
-      document.getElementById('progressBar').style.width = data.percent + '%';
-      document.getElementById('progressPercent').textContent = data.percent + '%';
-      document.getElementById('progressSpeed').textContent = '速度: ' + data.speed;
-      document.getElementById('progressEta').textContent = '剩餘: ' + data.eta;
-    }
-    else if (data.type === 'merging') {
-      document.getElementById('progressPercent').textContent = '合併中...';
-      showStatus(data.message, 'merging');
-    }
-    else if (data.type === 'done') {
-      evtSource.close();
-      document.getElementById('progressBar').style.width = '100%';
-      document.getElementById('progressPercent').textContent = '100%';
-      btn.disabled = false;
-      btn.textContent = '下載';
+        if (data.error) {
+          showStatus('錯誤：' + data.error, 'error');
+          return;
+        }
 
-      if (cloudMode && data.file_id) {
-        // Cloud mode: trigger browser download
-        const downloadUrl = '/api/file/' + data.file_id;
-        showStatus('準備完成！點擊下方按鈕儲存到裝置', 'success');
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.download = data.filename;
-        link.className = 'btn btn-download cloud-download-link';
-        link.textContent = '點擊下載到裝置';
-        link.style.display = 'block';
-        link.style.textAlign = 'center';
-        link.style.textDecoration = 'none';
-        link.style.marginTop = '12px';
-        document.getElementById('statusMsg').after(link);
-        // Also auto-trigger download
-        const autoLink = document.createElement('a');
-        autoLink.href = downloadUrl;
-        autoLink.download = data.filename;
-        document.body.appendChild(autoLink);
-        autoLink.click();
-        document.body.removeChild(autoLink);
-      } else {
+        if (data.download_url) {
+          showStatus('準備完成！點擊下方按鈕儲存到裝置', 'success');
+
+          const link = document.createElement('a');
+          link.href = data.download_url;
+          link.download = data.filename || 'video.mp4';
+          link.className = 'btn btn-download cloud-download-link';
+          link.textContent = '點擊下載到裝置';
+          link.style.display = 'block';
+          link.style.textAlign = 'center';
+          link.style.textDecoration = 'none';
+          link.style.marginTop = '12px';
+          link.target = '_blank';
+          link.rel = 'noopener';
+          document.getElementById('statusMsg').after(link);
+
+          // Auto-trigger
+          window.open(data.download_url, '_blank');
+        }
+      })
+      .catch(err => {
+        btn.disabled = false;
+        btn.textContent = '下載';
+        showStatus('連線錯誤：' + err.message, 'error');
+      });
+
+  } else {
+    // Local mode: use SSE stream with progress
+    document.getElementById('progressSection').classList.add('show');
+    document.getElementById('progressBar').style.width = '0%';
+    document.getElementById('progressPercent').textContent = '0%';
+    document.getElementById('progressSpeed').textContent = '速度: --';
+    document.getElementById('progressEta').textContent = '剩餘: --';
+
+    const params = new URLSearchParams({
+      url: currentUrl,
+      format_id: selectedFormat,
+      audio_only: isAudioOnly,
+    });
+
+    const evtSource = new EventSource(`/api/download?${params}`);
+
+    evtSource.onmessage = function(event) {
+      const data = JSON.parse(event.data);
+
+      if (data.type === 'progress') {
+        document.getElementById('progressBar').style.width = data.percent + '%';
+        document.getElementById('progressPercent').textContent = data.percent + '%';
+        document.getElementById('progressSpeed').textContent = '速度: ' + data.speed;
+        document.getElementById('progressEta').textContent = '剩餘: ' + data.eta;
+      }
+      else if (data.type === 'merging') {
+        document.getElementById('progressPercent').textContent = '合併中...';
+        showStatus(data.message, 'merging');
+      }
+      else if (data.type === 'done') {
+        evtSource.close();
+        document.getElementById('progressBar').style.width = '100%';
+        document.getElementById('progressPercent').textContent = '100%';
+        btn.disabled = false;
+        btn.textContent = '下載';
         showStatus('完成！已存到 Downloads/' + data.filename, 'success');
       }
-    }
-    else if (data.type === 'error') {
+      else if (data.type === 'error') {
+        evtSource.close();
+        btn.disabled = false;
+        btn.textContent = '下載';
+        showStatus('錯誤：' + data.message, 'error');
+      }
+    };
+
+    evtSource.onerror = function() {
       evtSource.close();
       btn.disabled = false;
       btn.textContent = '下載';
-      showStatus('錯誤：' + data.message, 'error');
-    }
-  };
-
-  evtSource.onerror = function() {
-    evtSource.close();
-    btn.disabled = false;
-    btn.textContent = '下載';
-    showStatus('連線中斷', 'error');
-  };
+      showStatus('連線中斷', 'error');
+    };
+  }
 }
 
 function showStatus(msg, type) {

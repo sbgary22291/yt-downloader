@@ -5,6 +5,7 @@ import time
 import shutil
 import uuid
 import threading
+import requests as http_requests
 from queue import Queue, Empty
 from pathlib import Path
 
@@ -20,24 +21,24 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # Store active download progress queues
 progress_queues = {}
 
-# Track temp files for cleanup: {file_id: {"path": ..., "created": timestamp}}
+# Track temp files for cleanup
 temp_files = {}
 TEMP_FILE_TTL = 30 * 60  # 30 minutes
 
-# Common yt-dlp options
+# Cobalt API endpoint
+COBALT_API = "https://api.cobalt.tools"
+
+# yt-dlp options (for local mode only)
 YDL_BASE_OPTS = {
     "quiet": True,
     "no_warnings": True,
 }
-
-# Use cookies.txt if it exists
 COOKIES_FILE = os.path.join(os.path.dirname(__file__), "cookies.txt")
 if os.path.exists(COOKIES_FILE):
     YDL_BASE_OPTS["cookiefile"] = COOKIES_FILE
 
 
 def cleanup_temp_files():
-    """Remove temp files older than TTL, runs every 5 minutes."""
     while True:
         time.sleep(300)
         now = time.time()
@@ -52,7 +53,6 @@ def cleanup_temp_files():
                     pass
 
 
-# Start cleanup thread
 cleanup_thread = threading.Thread(target=cleanup_temp_files, daemon=True)
 cleanup_thread.start()
 
@@ -60,21 +60,6 @@ cleanup_thread.start()
 @app.route("/")
 def index():
     return render_template("index.html", cloud_mode=CLOUD_MODE)
-
-
-@app.route("/api/debug")
-def debug_info():
-    import yt_dlp
-    cookies_exists = os.path.exists(COOKIES_FILE)
-    cookies_size = os.path.getsize(COOKIES_FILE) if cookies_exists else 0
-    return jsonify({
-        "cloud_mode": CLOUD_MODE,
-        "cookies_path": COOKIES_FILE,
-        "cookies_exists": cookies_exists,
-        "cookies_size": cookies_size,
-        "yt_dlp_version": yt_dlp.version.__version__,
-        "base_opts": {k: str(v) for k, v in YDL_BASE_OPTS.items()},
-    })
 
 
 @app.route("/api/check")
@@ -91,6 +76,50 @@ def get_info():
     if not url:
         return jsonify({"error": "請提供 YouTube 網址"}), 400
 
+    if CLOUD_MODE:
+        return _get_info_cloud(url)
+    else:
+        return _get_info_local(url)
+
+
+def _get_info_cloud(url):
+    """Use YouTube oEmbed API for video info (no auth needed)."""
+    try:
+        oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
+        r = http_requests.get(oembed_url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+
+        # Extract video ID for thumbnail
+        video_id = ""
+        m = re.search(r'(?:v=|youtu\.be/|/shorts/)([a-zA-Z0-9_-]{11})', url)
+        if m:
+            video_id = m.group(1)
+
+        quality_options = [
+            {"format_id": "1080", "label": "1080p", "size_mb": None},
+            {"format_id": "720", "label": "720p", "size_mb": None},
+            {"format_id": "480", "label": "480p", "size_mb": None},
+            {"format_id": "360", "label": "360p", "size_mb": None},
+            {"format_id": "audio", "label": "僅音訊 (MP3)", "size_mb": None, "audio_only": True},
+        ]
+
+        result = {
+            "title": data.get("title", "未知"),
+            "thumbnail": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg" if video_id else "",
+            "duration": "",
+            "duration_seconds": 0,
+            "channel": data.get("author_name", ""),
+            "qualities": quality_options,
+        }
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({"error": f"無法取得影片資訊：{str(e)}"}), 400
+
+
+def _get_info_local(url):
+    """Use yt-dlp for local mode."""
     try:
         import yt_dlp
 
@@ -99,8 +128,6 @@ def get_info():
             info = ydl.extract_info(url, download=False)
 
         formats = info.get("formats", [])
-
-        # Collect available heights
         available_heights = set()
         for f in formats:
             h = f.get("height")
@@ -109,13 +136,11 @@ def get_info():
 
         has_audio = any(f.get("acodec", "none") != "none" for f in formats)
 
-        # Build quality options using generic selectors (never use specific format_id)
         quality_options = []
         for h in sorted(available_heights, reverse=True):
-            label = f"{h}p"
             quality_options.append({
                 "format_id": f"bv[height<={h}]+ba/b[height<={h}]/b",
-                "label": label,
+                "label": f"{h}p",
                 "size_mb": None,
             })
 
@@ -161,12 +186,60 @@ def download_video():
     if not url:
         return jsonify({"error": "缺少 URL"}), 400
 
+    if CLOUD_MODE:
+        return _download_cloud(url, format_id, audio_only)
+    else:
+        return _download_local(url, format_id, audio_only)
+
+
+def _download_cloud(url, quality, audio_only):
+    """Use Cobalt API to get download link."""
+    try:
+        payload = {"url": url}
+
+        if audio_only:
+            payload["downloadMode"] = "audio"
+            payload["audioFormat"] = "mp3"
+        else:
+            payload["downloadMode"] = "auto"
+            payload["videoQuality"] = quality
+
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+        r = http_requests.post(COBALT_API, json=payload, headers=headers, timeout=30)
+        data = r.json()
+
+        if data.get("status") == "error":
+            error_msg = data.get("error", {}).get("code", "未知錯誤")
+            return jsonify({"error": f"下載失敗：{error_msg}"}), 400
+
+        download_url = data.get("url", "")
+        filename = data.get("filename", "video.mp4")
+
+        if not download_url:
+            return jsonify({"error": "無法取得下載連結"}), 400
+
+        # Return the cobalt download URL directly to the browser
+        return jsonify({
+            "status": "redirect",
+            "download_url": download_url,
+            "filename": filename,
+        })
+
+    except Exception as e:
+        return jsonify({"error": f"下載失敗：{str(e)}"}), 400
+
+
+def _download_local(url, format_id, audio_only):
+    """Use yt-dlp for local downloads (original logic)."""
     download_id = str(uuid.uuid4())
     q = Queue()
     progress_queues[download_id] = q
 
-    # In cloud mode, download to temp dir; otherwise to Downloads
-    dest_dir = TEMP_DIR if CLOUD_MODE else DOWNLOAD_DIR
+    dest_dir = DOWNLOAD_DIR
 
     def do_download():
         try:
@@ -218,24 +291,14 @@ def download_video():
                     filename = os.path.splitext(filename)[0] + ".mp3"
                 basename = os.path.basename(filename)
 
-            result = {
+            q.put({
                 "type": "done",
                 "filename": basename,
-            }
-
-            # In cloud mode, register temp file and provide download link
-            if CLOUD_MODE:
-                file_id = str(uuid.uuid4())
-                filepath = os.path.join(dest_dir, basename)
-                temp_files[file_id] = {"path": filepath, "created": time.time()}
-                result["file_id"] = file_id
-
-            q.put(result)
+            })
 
         except Exception as e:
             q.put({"type": "error", "message": str(e)})
         finally:
-            # Signal end of stream
             q.put(None)
 
     thread = threading.Thread(target=do_download, daemon=True)
@@ -250,10 +313,8 @@ def download_video():
                     break
                 yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
             except Empty:
-                # Send keepalive
                 yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
 
-        # Cleanup
         progress_queues.pop(download_id, None)
 
     return Response(
@@ -268,7 +329,6 @@ def download_video():
 
 @app.route("/api/file/<file_id>")
 def serve_file(file_id):
-    """Serve a temp file for browser download (cloud mode)."""
     info = temp_files.get(file_id)
     if info and os.path.exists(info["path"]):
         return send_file(info["path"], as_attachment=True)
@@ -281,14 +341,13 @@ if __name__ == "__main__":
     print("\n" + "=" * 50)
     print("  YT Downloader 已啟動！")
     if CLOUD_MODE:
-        print("  模式：雲端")
+        print("  模式：雲端（Cobalt API）")
     else:
-        print("  模式：本地")
+        print("  模式：本地（yt-dlp）")
     print("=" * 50)
     print(f"\n  本機：http://localhost:{port}")
 
     if not CLOUD_MODE:
-        # Try to show LAN IP
         try:
             import socket
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
